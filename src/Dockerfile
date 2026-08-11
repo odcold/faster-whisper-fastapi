@@ -8,7 +8,9 @@ RUN mkdir -p ${APP_HOME}
 
 WORKDIR ${APP_HOME}
 
-COPY requirements.freeze .
-RUN pip3 install --no-cache-dir -r requirements.freeze
+RUN pip install torch==2.4.1+cpu --index-url https://download.pytorch.org/whl/cpu
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY app.py .

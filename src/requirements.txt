@@ -1,4 +1,8 @@
 fastapi
-faster-whisper
+optimum[openvino]
+transformers
+accelerate
+librosa
+soundfile
 uvicorn
 python-multipart

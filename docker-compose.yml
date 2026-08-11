@@ -11,6 +11,9 @@ services:
     environment:
       - PORT=${PORT}
       - MODEL_SIZE=${MODEL_SIZE}
+      - OPENVINO_DEVICE=${OPENVINO_DEVICE:-CPU}
+    devices:
+      - /dev/dri:/dev/dri
     restart: unless-stopped
     healthcheck:
       test: curl --fail http://localhost:${PORT}/health
