@@ -13,7 +13,9 @@ services:
       - MODEL_SIZE=${MODEL_SIZE:-tiny}
       - OPENVINO_DEVICE=GPU
     devices:
-      - /dev/dri:/dev/dri
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    group_add:
+      - '105'
     restart: unless-stopped
     healthcheck:
       test: curl --fail http://localhost:8000/health
