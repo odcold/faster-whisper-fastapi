@@ -4,9 +4,21 @@ import sys
 import os
 import numpy as np
 import soundfile as sf
+from unittest.mock import patch, MagicMock
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-from app import app
+
+# Mock the pipeline globally before importing app so it doesn't download models during tests
+with patch("transformers.AutoProcessor.from_pretrained") as mock_processor, \
+     patch("optimum.intel.openvino.OVModelForSpeechSeq2Seq.from_pretrained") as mock_model, \
+     patch("transformers.pipeline") as mock_pipeline:
+
+    # Configure the mocked pipeline to return a fake transcription result
+    mock_pipe_instance = MagicMock()
+    mock_pipe_instance.return_value = {"text": "mocked response"}
+    mock_pipeline.return_value = mock_pipe_instance
+
+    from app import app
 
 client = TestClient(app)
 
@@ -16,7 +28,6 @@ def test_health():
     assert response.json() == {"status": "ok"}
 
 def test_transcribe_short():
-    # Generate 1 second of 440 Hz tone
     sr = 16000
     t = np.linspace(0, 1, int(sr*1), endpoint=False)
     x = 0.5 * np.sin(2 * np.pi * 440 * t)
@@ -34,7 +45,6 @@ def test_transcribe_short():
     assert "response" in data
 
 def test_transcribe_long():
-    # Generate 35 seconds of 440 Hz tone to test chunking
     sr = 16000
     t = np.linspace(0, 35, int(sr*35), endpoint=False)
     x = 0.5 * np.sin(2 * np.pi * 440 * t)

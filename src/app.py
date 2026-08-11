@@ -11,10 +11,17 @@ import uvicorn
 from transformers import AutoProcessor, pipeline
 from optimum.intel.openvino import OVModelForSpeechSeq2Seq
 
-# The environment variable MODEL_SIZE is mapped to Hugging Face model IDs.
-# Defaulting to tiny, matching original behavior.
+# The environment variable MODEL_SIZE is mapped to pre-exported OpenVINO INT8 models
+# to prevent OOM errors during on-the-fly export and to drastically reduce memory usage.
+# Existing official Intel OpenVINO int8 optimized models:
+# OpenVINO/whisper-tiny-int8-ov
+# OpenVINO/whisper-base-int8-ov
+# OpenVINO/whisper-small-int8-ov
+# OpenVINO/whisper-medium-int8-ov
+# OpenVINO/whisper-large-v2-int8-ov
+# OpenVINO/whisper-large-v3-int8-ov
 model_size = os.getenv("MODEL_SIZE", "tiny")
-model_id = f"openai/whisper-{model_size}"
+model_id = f"OpenVINO/whisper-{model_size}-int8-ov"
 
 models_dir = os.path.join(os.path.dirname(__file__), "whisper_models/")
 if not os.path.exists(models_dir):
@@ -22,14 +29,14 @@ if not os.path.exists(models_dir):
 
 device = os.getenv("OPENVINO_DEVICE", "CPU")
 
-# Initialize OpenVINO model and processor
+# Initialize OpenVINO model and processor directly from the pre-exported INT8 weights
 print(f"Loading processor for {model_id}...")
 processor = AutoProcessor.from_pretrained(model_id, cache_dir=models_dir)
 
-print(f"Loading and exporting OpenVINO model for {model_id} on {device}...")
+print(f"Loading OpenVINO INT8 model {model_id} on {device} (No OOM during load!)...")
+# export=False is the default, which avoids the massive RAM spike during boot.
 model = OVModelForSpeechSeq2Seq.from_pretrained(
     model_id,
-    export=True,
     cache_dir=models_dir,
     device=device
 )
@@ -54,8 +61,13 @@ async def transcribe(
     response: Response, audio: UploadFile
 ) -> dict[Literal["response", "status"], str]:
     try:
+        # Determine the file extension safely
+        ext = os.path.splitext(audio.filename)[1] if audio.filename else ".wav"
+        if not ext:
+            ext = ".wav"
+
         # Save the uploaded file to a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio.filename or ".wav")[1]) as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             shutil.copyfileobj(audio.file, tmp)
             tmp_path = tmp.name
 
