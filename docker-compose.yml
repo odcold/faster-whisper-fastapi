@@ -14,6 +14,7 @@ services:
       - OPENVINO_DEVICE=GPU
     devices:
       - /dev/dri/renderD128:/dev/dri/renderD128
+    user: root
     group_add:
       - '105'
     restart: unless-stopped
