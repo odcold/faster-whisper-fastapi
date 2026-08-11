@@ -10,19 +10,26 @@ services:
     env_file: .env
     environment:
       - PORT=${PORT}
-      - MODEL_SIZE=${MODEL_SIZE}
-      - OPENVINO_DEVICE=${OPENVINO_DEVICE:-CPU}
+      - MODEL_SIZE=${MODEL_SIZE:-tiny}
+      - OPENVINO_DEVICE=GPU
     devices:
       - /dev/dri:/dev/dri
     restart: unless-stopped
     healthcheck:
-      test: curl --fail http://localhost:${PORT}/health
+      test: curl --fail http://localhost:8000/health
       interval: 30m
       timeout: 30s
       retries: 5
       start_period: 5m
     volumes:
       - whisper_models:/home/app/app/whisper_models/
+    networks:
+      - whisper
   
 volumes:
   whisper_models:
+
+networks:
+  whisper:
+    name: whisper
+    external: true
