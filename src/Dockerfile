@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bullseye
+FROM python:3.12-slim-trixie
 
 # Install ffmpeg for audio processing and OpenCL drivers for Intel GPU support in OpenVINO
 RUN apt-get update && apt-get install -y ffmpeg intel-opencl-icd ocl-icd-libopencl1 && rm -rf /var/lib/apt/lists/*
