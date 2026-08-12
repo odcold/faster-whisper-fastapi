@@ -4,6 +4,7 @@ import sys
 import os
 import numpy as np
 import soundfile as sf
+import torch
 from unittest.mock import patch, MagicMock
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
@@ -19,9 +20,9 @@ with patch("transformers.AutoProcessor.from_pretrained") as mock_processor, \
 
     # Configure the mocked processor
     mock_processor_instance = MagicMock()
-    # When processor is called, return dummy input features
+    # When processor is called, return dummy input features (as a torch Tensor so ones_like works)
     mock_inputs = MagicMock()
-    mock_inputs.input_features = "dummy_features"
+    mock_inputs.input_features = torch.tensor([[1.0, 2.0]])
     mock_processor_instance.return_value = mock_inputs
     # Decode to text
     mock_processor_instance.batch_decode.return_value = ["mocked response"]

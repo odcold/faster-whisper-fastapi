@@ -43,9 +43,17 @@ model = OVModelForSpeechSeq2Seq.from_pretrained(
     device=device
 )
 
+import torch
+
 # Configure generation directly on the model to avoid passing conflicting generation parameters
 model.generation_config.num_beams = 5
 model.generation_config.task = "transcribe" # fixes "Translation vs Transcription" ambiguity warning
+
+# Fix SuppressTokensLogitsProcessor warnings
+if hasattr(model.generation_config, "suppress_tokens"):
+    model.generation_config.suppress_tokens = None
+if hasattr(model.generation_config, "begin_suppress_tokens"):
+    model.generation_config.begin_suppress_tokens = None
 
 app = FastAPI()
 
@@ -69,7 +77,11 @@ def transcribe_audio_manual(audio_path: str) -> str:
         )
 
         # Generate token ids
-        predicted_ids = model.generate(inputs.input_features)
+        attention_mask = torch.ones_like(inputs.input_features)
+        predicted_ids = model.generate(
+            inputs.input_features,
+            attention_mask=attention_mask
+        )
 
         # Decode the token ids to text
         transcription = processor.batch_decode(
