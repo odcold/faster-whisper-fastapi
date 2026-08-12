@@ -8,7 +8,7 @@ from fastapi import UploadFile
 from fastapi import Response
 import uvicorn
 
-from transformers import AutoProcessor, pipeline
+from transformers import AutoProcessor, pipeline, GenerationConfig
 from optimum.intel.openvino import OVModelForSpeechSeq2Seq
 
 # The environment variable MODEL_SIZE is mapped to pre-exported OpenVINO INT8 models
@@ -40,6 +40,10 @@ model = OVModelForSpeechSeq2Seq.from_pretrained(
     cache_dir=models_dir,
     device=device
 )
+
+# Configure generation directly on the model to avoid passing conflicting generation parameters
+model.generation_config.num_beams = 5
+model.generation_config.task = "transcribe" # fixes "Translation vs Transcription" ambiguity warning
 
 pipe = pipeline(
     "automatic-speech-recognition",
@@ -73,8 +77,7 @@ async def transcribe(
 
         try:
             # Transcribe using the pipeline
-            # Passing generate_kwargs to ensure parity with the previous implementation's accuracy
-            result = pipe(tmp_path, generate_kwargs={"num_beams": 5})
+            result = pipe(tmp_path)
             text = result.get("text", "")
             return {
                 "status": "ok",
