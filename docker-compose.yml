@@ -11,6 +11,7 @@ services:
     environment:
       - PORT=${PORT}
       - MODEL_SIZE=${MODEL_SIZE:-tiny}
+      - LANGUAGE=${LANGUAGE:-}
       - OPENVINO_DEVICE=GPU
     devices:
       - /dev/dri/renderD128:/dev/dri/renderD128

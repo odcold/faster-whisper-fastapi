@@ -49,6 +49,11 @@ import torch
 model.generation_config.num_beams = 5
 model.generation_config.task = "transcribe" # fixes "Translation vs Transcription" ambiguity warning
 
+# Optional language forcing
+model_language = os.getenv("LANGUAGE", "").strip()
+if model_language:
+    model.generation_config.language = model_language
+
 # Fix SuppressTokensLogitsProcessor warnings
 if hasattr(model.generation_config, "suppress_tokens"):
     model.generation_config.suppress_tokens = None
