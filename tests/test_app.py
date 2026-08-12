@@ -8,15 +8,25 @@ from unittest.mock import patch, MagicMock
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
-# Mock the pipeline globally before importing app so it doesn't download models during tests
+# Mock the processor and model
 with patch("transformers.AutoProcessor.from_pretrained") as mock_processor, \
-     patch("optimum.intel.openvino.OVModelForSpeechSeq2Seq.from_pretrained") as mock_model, \
-     patch("transformers.pipeline") as mock_pipeline:
+     patch("optimum.intel.openvino.OVModelForSpeechSeq2Seq.from_pretrained") as mock_model:
 
-    # Configure the mocked pipeline to return a fake transcription result
-    mock_pipe_instance = MagicMock()
-    mock_pipe_instance.return_value = {"text": "mocked response"}
-    mock_pipeline.return_value = mock_pipe_instance
+    # Configure the mocked model to return a dummy sequence of ids
+    mock_model_instance = MagicMock()
+    mock_model_instance.generate.return_value = [[1, 2, 3]]
+    mock_model.return_value = mock_model_instance
+
+    # Configure the mocked processor
+    mock_processor_instance = MagicMock()
+    # When processor is called, return dummy input features
+    mock_inputs = MagicMock()
+    mock_inputs.input_features = "dummy_features"
+    mock_processor_instance.return_value = mock_inputs
+    # Decode to text
+    mock_processor_instance.batch_decode.return_value = ["mocked response"]
+
+    mock_processor.return_value = mock_processor_instance
 
     from app import app
 
@@ -43,6 +53,7 @@ def test_transcribe_short():
     data = response.json()
     assert data["status"] == "ok"
     assert "response" in data
+    assert data["response"] == "mocked response"
 
 def test_transcribe_long():
     sr = 16000
@@ -60,3 +71,4 @@ def test_transcribe_long():
     data = response.json()
     assert data["status"] == "ok"
     assert "response" in data
+    assert data["response"] == "mocked response mocked response"

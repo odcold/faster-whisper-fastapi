@@ -8,7 +8,9 @@ from fastapi import UploadFile
 from fastapi import Response
 import uvicorn
 
-from transformers import AutoProcessor, pipeline, GenerationConfig
+import librosa
+import numpy as np
+from transformers import AutoProcessor, GenerationConfig
 from optimum.intel.openvino import OVModelForSpeechSeq2Seq
 
 # The environment variable MODEL_SIZE is mapped to pre-exported OpenVINO INT8 models
@@ -45,15 +47,39 @@ model = OVModelForSpeechSeq2Seq.from_pretrained(
 model.generation_config.num_beams = 5
 model.generation_config.task = "transcribe" # fixes "Translation vs Transcription" ambiguity warning
 
-pipe = pipeline(
-    "automatic-speech-recognition",
-    model=model,
-    tokenizer=processor.tokenizer,
-    feature_extractor=processor.feature_extractor,
-    chunk_length_s=30, # required to support audio longer than 30s
-)
-
 app = FastAPI()
+
+def transcribe_audio_manual(audio_path: str) -> str:
+    """Manually chunks and transcribes audio to avoid experimental pipeline warnings."""
+    # Load and resample audio to 16kHz (Whisper's expected sampling rate)
+    audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
+
+    # 30 seconds = 30 * 16000 samples
+    chunk_size = 30 * 16000
+    transcriptions = []
+
+    for i in range(0, len(audio_array), chunk_size):
+        chunk = audio_array[i:i + chunk_size]
+
+        # Process the raw audio chunk into input features
+        inputs = processor(
+            chunk,
+            sampling_rate=sampling_rate,
+            return_tensors="pt"
+        )
+
+        # Generate token ids
+        predicted_ids = model.generate(inputs.input_features)
+
+        # Decode the token ids to text
+        transcription = processor.batch_decode(
+            predicted_ids,
+            skip_special_tokens=True
+        )[0]
+
+        transcriptions.append(transcription.strip())
+
+    return " ".join(transcriptions)
 
 @app.get("/health")
 async def health():
@@ -76,9 +102,8 @@ async def transcribe(
             tmp_path = tmp.name
 
         try:
-            # Transcribe using the pipeline
-            result = pipe(tmp_path)
-            text = result.get("text", "")
+            # Transcribe using manual chunking instead of the pipeline
+            text = transcribe_audio_manual(tmp_path)
             return {
                 "status": "ok",
                 "response": text.strip(),
