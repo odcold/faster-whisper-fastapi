@@ -1,4 +1,6 @@
 import os
+import shutil
+import tempfile
 from typing import Literal
 
 from fastapi import FastAPI
@@ -6,25 +8,118 @@ from fastapi import UploadFile
 from fastapi import Response
 import uvicorn
 
-from faster_whisper import WhisperModel
+import librosa
+import numpy as np
+from transformers import AutoProcessor, GenerationConfig
+from optimum.intel.openvino import OVModelForSpeechSeq2Seq
 
+# The environment variable MODEL_SIZE is mapped to pre-exported OpenVINO INT8 models
+# to prevent OOM errors during on-the-fly export and to drastically reduce memory usage.
+# Existing official Intel OpenVINO int8 optimized models:
+# OpenVINO/whisper-tiny-int8-ov
+# OpenVINO/whisper-base-int8-ov
+# OpenVINO/whisper-small-int8-ov
+# OpenVINO/whisper-medium-int8-ov
+# OpenVINO/whisper-large-v2-int8-ov
+# OpenVINO/whisper-large-v3-int8-ov
+model_size = os.getenv("MODEL_SIZE", "tiny")
+model_id = f"OpenVINO/whisper-{model_size}-int8-ov"
 
 models_dir = os.path.join(os.path.dirname(__file__), "whisper_models/")
 if not os.path.exists(models_dir):
     os.mkdir(models_dir)
 
-model_size = os.getenv("MODEL_SIZE", "tiny")
-model = WhisperModel(
-    model_size_or_path=model_size,
-    device="auto",
-    compute_type="int8",
-    download_root=models_dir,
-    local_files_only=False,
+device = os.getenv("OPENVINO_DEVICE", "CPU")
+
+# Initialize OpenVINO model and processor directly from the pre-exported INT8 weights
+print(f"Loading processor for {model_id}...")
+processor = AutoProcessor.from_pretrained(model_id, cache_dir=models_dir)
+
+print(f"Loading OpenVINO INT8 model {model_id} on {device} (No OOM during load!)...")
+# export=False is the default, which avoids the massive RAM spike during boot.
+model = OVModelForSpeechSeq2Seq.from_pretrained(
+    model_id,
+    cache_dir=models_dir,
+    device=device
 )
 
+import torch
+
+# Configure generation directly on the model to avoid passing conflicting generation parameters
+model.generation_config.num_beams = 5
+model.generation_config.task = "transcribe" # fixes "Translation vs Transcription" ambiguity warning
+
+# Optional language forcing
+model_language = os.getenv("LANGUAGE", "").strip()
+if model_language:
+    model.generation_config.language = model_language
+
+# Fix SuppressTokensLogitsProcessor warnings
+if hasattr(model.generation_config, "suppress_tokens"):
+    model.generation_config.suppress_tokens = None
+if hasattr(model.generation_config, "begin_suppress_tokens"):
+    model.generation_config.begin_suppress_tokens = None
 
 app = FastAPI()
 
+import traceback
+import subprocess
+
+def transcribe_audio_manual(audio_path: str) -> str:
+    """Manually chunks and transcribes audio to avoid experimental pipeline warnings."""
+    # Explicitly convert the audio to 16kHz 16-bit PCM WAV using FFmpeg.
+    # This acts as a bulletproof fallback for formats like .m4a and Telegram .ogg
+    # that librosa/soundfile natively struggle to parse without throwing exceptions.
+    wav_path = audio_path + "_converted.wav"
+    try:
+        # Run FFmpeg to convert to standard wav
+        subprocess.run([
+            "ffmpeg", "-i", audio_path,
+            "-ar", "16000", "-ac", "1",
+            "-c:a", "pcm_s16le", "-y", wav_path
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Now librosa handles the clean WAV natively
+        audio_array, sampling_rate = librosa.load(wav_path, sr=16000)
+    except subprocess.CalledProcessError as e:
+        raise ValueError(f"FFmpeg failed to decode the audio file: {audio_path}")
+    except Exception as e:
+        raise ValueError(f"Failed to decode audio file using librosa. Error: {str(e)}\n{traceback.format_exc()}")
+    finally:
+        # Clean up the intermediate wav file
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
+
+    # 30 seconds = 30 * 16000 samples
+    chunk_size = 30 * 16000
+    transcriptions = []
+
+    for i in range(0, len(audio_array), chunk_size):
+        chunk = audio_array[i:i + chunk_size]
+
+        # Process the raw audio chunk into input features
+        inputs = processor(
+            chunk,
+            sampling_rate=sampling_rate,
+            return_tensors="pt"
+        )
+
+        # Generate token ids
+        attention_mask = torch.ones_like(inputs.input_features)
+        predicted_ids = model.generate(
+            inputs.input_features,
+            attention_mask=attention_mask
+        )
+
+        # Decode the token ids to text
+        transcription = processor.batch_decode(
+            predicted_ids,
+            skip_special_tokens=True
+        )[0]
+
+        transcriptions.append(transcription.strip())
+
+    return " ".join(transcriptions)
 
 @app.get("/health")
 async def health():
@@ -36,12 +131,27 @@ async def transcribe(
     response: Response, audio: UploadFile
 ) -> dict[Literal["response", "status"], str]:
     try:
-        segments, info = model.transcribe(audio=audio.file, beam_size=5)
-        text = "".join([segment.text for segment in segments])
-        return {
-            "status": "ok",
-            "response": text,
-        }
+        # Determine the file extension safely
+        ext = os.path.splitext(audio.filename)[1] if audio.filename else ".wav"
+        if not ext:
+            ext = ".wav"
+
+        # Save the uploaded file to a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            shutil.copyfileobj(audio.file, tmp)
+            tmp_path = tmp.name
+
+        try:
+            # Transcribe using manual chunking instead of the pipeline
+            text = transcribe_audio_manual(tmp_path)
+            return {
+                "status": "ok",
+                "response": text.strip(),
+            }
+        finally:
+            # Clean up the temporary file
+            os.remove(tmp_path)
+
     except Exception as e:
         response.status_code = 500
         return {
