@@ -63,14 +63,32 @@ if hasattr(model.generation_config, "begin_suppress_tokens"):
 app = FastAPI()
 
 import traceback
+import subprocess
 
 def transcribe_audio_manual(audio_path: str) -> str:
     """Manually chunks and transcribes audio to avoid experimental pipeline warnings."""
-    # Load and resample audio to 16kHz (Whisper's expected sampling rate)
+    # Explicitly convert the audio to 16kHz 16-bit PCM WAV using FFmpeg.
+    # This acts as a bulletproof fallback for formats like .m4a and Telegram .ogg
+    # that librosa/soundfile natively struggle to parse without throwing exceptions.
+    wav_path = audio_path + "_converted.wav"
     try:
-        audio_array, sampling_rate = librosa.load(audio_path, sr=16000)
+        # Run FFmpeg to convert to standard wav
+        subprocess.run([
+            "ffmpeg", "-i", audio_path,
+            "-ar", "16000", "-ac", "1",
+            "-c:a", "pcm_s16le", "-y", wav_path
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Now librosa handles the clean WAV natively
+        audio_array, sampling_rate = librosa.load(wav_path, sr=16000)
+    except subprocess.CalledProcessError as e:
+        raise ValueError(f"FFmpeg failed to decode the audio file: {audio_path}")
     except Exception as e:
-        raise ValueError(f"Failed to decode audio file using librosa/ffmpeg. Error: {str(e)}\n{traceback.format_exc()}")
+        raise ValueError(f"Failed to decode audio file using librosa. Error: {str(e)}\n{traceback.format_exc()}")
+    finally:
+        # Clean up the intermediate wav file
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
 
     # 30 seconds = 30 * 16000 samples
     chunk_size = 30 * 16000
